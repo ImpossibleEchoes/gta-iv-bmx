@@ -48,6 +48,7 @@ tComponentInfo g_bmxComponents[]{
 
 struct CVehicleModelInfo_2 : CVehicleModelInfo {
 	static size_t ms_setComponents;
+	static size_t ms_findVehEngineStartingPedAnim;
 
 	void* setComponents(tComponentInfo* pComponents, bool bDoNotInitLights) {
 		auto ret = ((void* (__thiscall*)(CVehicleModelInfo*, tComponentInfo*, char))ms_setComponents)(this, pComponents, bDoNotInitLights);
@@ -57,11 +58,27 @@ struct CVehicleModelInfo_2 : CVehicleModelInfo {
 		return ret;
 	}
 
+	// 3адумка: якщо це бмх, тоді ця функція вертає -1 (ANIM_INVALID) щоб водії бмх не запускав фантомний двигун. Якщо не бмх, тоді запускається оригінальна функція
+	static int __cdecl fixBmxEngineStarting(int animGroup, int* pAnimId, CPed* pPed, CVehicle* pVeh, int _e, bool _f, bool _g, bool _h) {
+		auto pModelInfo = (CVehicleModelInfo*)(g_pModelPointers[pVeh->m_wModelIndex]);
+
+		// это bmx?
+		if (pModelInfo->m_dwTypes[0] == 1 && pModelInfo->m_dwTypes[1] == 6)
+			return -1; // вертаємо -1 щоб гра думала що контейнер не має анімації starting/hotwire
+
+		return ((int(__cdecl*)(int, int*, CPed*, CVehicle*, int, bool, bool, bool))ms_findVehEngineStartingPedAnim)(animGroup, pAnimId, pPed, pVeh, _e, _f, _g, _h);
+
+	}
+
+
 	static void initPatch() {
 		ms_setComponents = setFnAddrInCallOpcode(g_hookAddr_CVehicleModelInfo_setComponents_bike, getThisCallAddr(&setComponents));
+		ms_findVehEngineStartingPedAnim = setFnAddrInCallOpcode(g_hookAddr_findVehEngineStartingPedAnim, (size_t)fixBmxEngineStarting);
 	}
 };
 
+size_t CVehicleModelInfo_2::ms_setComponents;
+size_t CVehicleModelInfo_2::ms_findVehEngineStartingPedAnim;
 
 struct CBmx : CBike {
 	static size_t ms_doProcessControl_prev;
@@ -117,6 +134,31 @@ struct CBmx : CBike {
 
 	virtual char doProcessControl() {
 		auto ret = ((char(__thiscall*)(CBmx*))(ms_doProcessControl_prev))(this);
+
+		// Если двигатель заведен
+		if ((m_nbVehicleFlags1_0 & 0x8) != 0) {
+
+			// Если водителя нет - глушим двигатель
+			if (!m_pDriver)
+				turnEngineOff();
+
+			// если все же водитель есть, заводим его опять (конечно же, не всегда, а с небольшой оптимизацией) чтобы какой-нибудь другой скрипт не смог его заглушить неправильним способом
+			else if(!(*g_pdwGameTimer % 3))
+				turnEngineOn(true);
+		}
+		
+		// если двигатель загрушен, но водитель на месте, нужно его завести
+		else if(m_pDriver)
+			turnEngineOn(true);
+		
+		// Проверяем хп двигателя и бензобака. Если они меньше 1к, тогда нужно установить их на 1к
+		//if (!(*g_pdwGameTimer % 3)) {
+			if (m_fPetrolTankHealth < 1000.f)
+				m_fPetrolTankHealth = 1000.f;
+			if (m_transmission.m_fEngineHealth < 1000.f)
+				m_transmission.m_fEngineHealth = 1000.f;
+		//}
+
 
 		m_fChainsetRot = 0.f;
 		for (size_t i = 0; i < m_dwNumWheels; i++) {
@@ -248,8 +290,6 @@ struct CBmx : CBike {
 	}
 };
 
-
-size_t CVehicleModelInfo_2::ms_setComponents;
 
 size_t* CBmx::ms_vmtAddr;
 CBmx CBmx::bmx;
@@ -474,11 +514,11 @@ void processBmxFoots(CBmx* pVeh, CPed* pPed, CVehicleModelInfo* pModelInfo) {
 
 struct CVehicle_2 : CVehicle {
 
-	static size_t ms_isDriver;
+	static size_t ms_processBmxFoots;
 
-	bool isDriver(CPed* pPed) {
+	bool processBmxIk(CPed* pPed) {
 
-		if (((bool(__thiscall*)(CVehicle_2*, void*))ms_isDriver)(this, pPed)) {
+		if (isDriver(pPed)) {
 			auto pModelInfo = (CVehicleModelInfo*)(g_pModelPointers[m_wModelIndex]);
 			if (pModelInfo->m_dwTypes[0] == 1 && pModelInfo->m_dwTypes[1] == 6)
 				processBmxFoots((CBmx*)this, pPed, pModelInfo);
@@ -490,10 +530,12 @@ struct CVehicle_2 : CVehicle {
 	}
 
 	static void initPatch() {
-		ms_isDriver = setFnAddrInCallOpcode(g_hookAddr_setBikeIk, getThisCallAddr(&isDriver));
+		ms_processBmxFoots = setFnAddrInCallOpcode(g_hookAddr_setBikeIk, getThisCallAddr(&processBmxIk));
 	}
 };
-size_t CVehicle_2::ms_isDriver;
+size_t CVehicle_2::ms_processBmxFoots;
+
+
 
 void patch() {
 

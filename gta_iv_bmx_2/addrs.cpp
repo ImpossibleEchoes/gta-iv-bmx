@@ -68,6 +68,9 @@ size_t g_CVehicle__setBoneRotation;
 size_t g_CDynamicEntity__getBoneMatrixInWorld;
 size_t g_hookAddr_setBikeIk;
 size_t g_CAnimBlender__getPlayerByAnimId;
+size_t g_hookAddr_findVehEngineStartingPedAnim;
+size_t g_CVehicle__turnEngineOn;
+size_t g_CVehicle__turnEngineOff;
 
 bool g_bIsCE = false;
 
@@ -402,6 +405,21 @@ DWORD initAddrsDynamicCE() {
 		result |= 1 << 8;
 
 	g_vmtAddr_CVehicleFactoryNY__createVehicle = g_vmtAddr__CVehicleFactoryNY__createVehicle; // втф!?
+
+	g_hookAddr_findVehEngineStartingPedAnim = findPattern("E8 ? ? ? ? 8B F8 83 C4 20 83 FF FF 74 44 FF 74 24 10 57 E8 ? ? ? ? 83 C4 08 85 C0 74 33 66 8B 44 24 ? 80 66 18 F7 66 89 7E 1C 66 89 46 1E ");
+	if (!g_hookAddr_findVehEngineStartingPedAnim)
+		result |= 1 << 8;
+
+	g_CVehicle__turnEngineOn = findPattern("80 7C 24 ? ? 56 8B F1 8A 86 ? ? ? ? 74 0E 24 EF 0C 48 88 86 ? ? ? ? 5E C2 04 00 ");
+	if (!g_CVehicle__turnEngineOn)
+		result |= 1 << 8;
+
+	addr = findPattern("E8 ? ? ? ? 80 A7 ? ? ? ? ? 80 A7 ? ? ? ? ? 5F 5E 8B E5 5D C2 14 00 ");
+	if (addr)
+		g_CVehicle__turnEngineOff = getFnAddrInCallOpcode(addr);
+	else
+		result |= 1 << 8;
+
 
 
 	return result;

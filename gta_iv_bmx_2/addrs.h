@@ -53,6 +53,11 @@ extern size_t g_CDynamicEntity__getBoneMatrixInWorld;
 extern size_t g_hookAddr_setBikeIk;
 extern size_t g_CAnimBlender__getPlayerByAnimId;
 
+extern size_t g_hookAddr_findVehEngineStartingPedAnim;
+extern size_t g_CVehicle__turnEngineOn;
+extern size_t g_CVehicle__turnEngineOff;
+
+
 //extern size_t g_getDistSqrToCamera;
 //extern size_t g_ppMaterialMgr;
 //extern size_t g_pVehFx;

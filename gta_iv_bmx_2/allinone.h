@@ -480,21 +480,40 @@ STATIC_ASSERT_EXPR(sizeof(CDynamicEntity) == 0x10C);
 STATIC_ASSERT_EXPR(sizeof(CPhysical) == 0x1C0);
 
 struct CVehicle : CPhysical {
-	PADDING(0xF7C - 0x1C0 + 4); // +0x1C0
+	PADDING(0xD54); // +1C0
+	BYTE m_nbVehicleFlags1_0; // +F14
+	BYTE m_nbVehicleFlags1_1; // +F15
+	BYTE m_nbVehicleFlags1_2; // +F16
+	BYTE m_nbVehicleFlags1_3; // +F17
+	PADDING(0x38); // +F18
+	CPed* m_pDriver; // +F50
+	PADDING(0x2C); // +F54
 	CWheel* m_pWheels; // +F80
 	DWORD m_dwNumWheels; // +F84
 	PADDING(0xF0); // +F88
 	float m_fGasPedal; // +1078
 	PADDING(0x14); // +107C
 	CTransmission m_transmission; // +1090
-	// +10B8
+	PADDING(0x18); // +10B8
 	
-	PADDING(0x1308 - 0x10B8);
+	// damage manager
+	PADDING(0x8); // +10D0
+	float m_fPetrolTankHealth; // +10D8
+
+	PADDING(0x22C);
+
+	__forceinline bool isDriver(CPed* pPed) const { return pPed && m_pDriver == pPed; }
+	__forceinline char turnEngineOn(bool _b) { return ((char(__thiscall*)(CVehicle*, bool))(g_CVehicle__turnEngineOn))(this, _b); }
+	__forceinline void turnEngineOff() { ((void(__thiscall*)(CVehicle*))(g_CVehicle__turnEngineOff))(this); }
+
 };
 
+STATIC_ASSERT_EXPR(offsetof(CVehicle, m_nbVehicleFlags1_0) == 0xF14);
+STATIC_ASSERT_EXPR(offsetof(CVehicle, m_pDriver) == 0xF50);
 STATIC_ASSERT_EXPR(offsetof(CVehicle, m_dwNumWheels) == 0xF84);
 STATIC_ASSERT_EXPR(offsetof(CVehicle, m_pWheels) == 0xF80);
 STATIC_ASSERT_EXPR(offsetof(CVehicle, m_transmission) == 0x1090);
+STATIC_ASSERT_EXPR(offsetof(CVehicle, m_fPetrolTankHealth) == 0x10D8);
 
 STATIC_ASSERT_EXPR(sizeof(CVehicle) == 0x1308);
 
