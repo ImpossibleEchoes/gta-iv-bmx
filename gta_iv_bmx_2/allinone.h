@@ -80,8 +80,21 @@ struct CDynamicEntity : CEntity {
 };
 
 struct CPhysical : CDynamicEntity {
-	PADDING(0x1C0 - 0x10C); // +10C
+	enum {
+		PHYSICALFLAG_IGNORE_BULLET_DAMAGE = 1 << 6,
+		PHYSICALFLAG_IGNORE_FIRE_DAMAGE = 1 << 7,
+		PHYSICALFLAG_IGNORE_COLLISION_DAMAGE = 1 << 8,
+		PHYSICALFLAG_IGNORE_MELLE_DAMAGE = 1 << 9,
+		PHYSICALFLAG_IGNORE_ANYTHING_DAMAGE = 1 << 10, // Да
+		PHYSICALFLAG_IGNORE_EXPLOSION_DAMAGE = 1 << 12,
+	};
+
+	PADDING(0xC); // +10C
+	DWORD m_dwPhysicalFlags; // +118
+	PADDING(0xA4); // +10C
 };
+
+STATIC_ASSERT_EXPR(offsetof(CPhysical, m_dwPhysicalFlags) == 0x118);
 
 struct CPed;
 

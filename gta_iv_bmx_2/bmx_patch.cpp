@@ -83,7 +83,7 @@ size_t CVehicleModelInfo_2::ms_findVehEngineStartingPedAnim;
 struct CBmx : CBike {
 	static size_t ms_doProcessControl_prev;
 	static size_t ms_prerender_prev;
-
+	static size_t ms_explodeBike_prev;
 
 	// Bmx vars start here
 	float m_fChainsetRot;
@@ -96,8 +96,25 @@ struct CBmx : CBike {
 	static CBmx bmx;
 
 	static size_t* ms_vmtAddr;
-	static void regVmtAddr() {
-		ms_vmtAddr = *(size_t**)&bmx;
+	static void regVmtAddr();
+
+	// sets health to NaN
+	__forceinline void processHealth() {
+
+		if (m_fPetrolTankHealth == m_fPetrolTankHealth)
+			*(DWORD*)&m_fPetrolTankHealth = ~0;
+		if (m_transmission.m_fEngineHealth == m_transmission.m_fEngineHealth)
+			*(DWORD*)&m_transmission.m_fEngineHealth = ~0;
+
+		for (size_t i = 0; i < m_dwNumWheels; i++) {
+			if (m_pWheels[i].m_fHealth == m_pWheels[i].m_fHealth)
+				*(DWORD*)&m_pWheels[i].m_fHealth = ~0;
+			if (m_pWheels[i].m_fTyreHealth == m_pWheels[i].m_fTyreHealth)
+				*(DWORD*)&m_pWheels[i].m_fTyreHealth = ~0;
+		}
+
+		//if (!(m_dwPhysicalFlags & PHYSICALFLAG_IGNORE_EXPLOSION_DAMAGE))
+		//	m_dwPhysicalFlags |= PHYSICALFLAG_IGNORE_EXPLOSION_DAMAGE;
 	}
 
 	// ToDo: Need to add virtual function override for CBmx::processPhysics to add collision for chainset component
@@ -132,62 +149,13 @@ struct CBmx : CBike {
 	virtual void m6C() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m6C", nullptr, 0x10); }
 	virtual void m70() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m70", nullptr, 0x10); }
 
-	virtual char doProcessControl() {
-		auto ret = ((char(__thiscall*)(CBmx*))(ms_doProcessControl_prev))(this);
-
-		// ≈сли двигатель заведен
-		if ((m_nbVehicleFlags1_0 & 0x8) != 0) {
-
-			// ≈сли водител€ нет - глушим двигатель
-			if (!m_pDriver)
-				turnEngineOff();
-
-			// если все же водитель есть, заводим его оп€ть (конечно же, не всегда, а с небольшой оптимизацией) чтобы какой-нибудь другой скрипт не смог его заглушить неправильним способом
-			else if(!(*g_pdwGameTimer % 3))
-				turnEngineOn(true);
-		}
-		
-		// если двигатель загрушен, но водитель на месте, нужно его завести
-		else if(m_pDriver)
-			turnEngineOn(true);
-		
-		// ѕровер€ем хп двигател€ и бензобака. ≈сли они меньше 1к, тогда нужно установить их на 1к
-		//if (!(*g_pdwGameTimer % 3)) {
-			if (m_fPetrolTankHealth < 1000.f)
-				m_fPetrolTankHealth = 1000.f;
-			if (m_transmission.m_fEngineHealth < 1000.f)
-				m_transmission.m_fEngineHealth = 1000.f;
-		//}
-
-
-		m_fChainsetRot = 0.f;
-		for (size_t i = 0; i < m_dwNumWheels; i++) {
-			if (m_pWheels[i].m_dwBoneId == HIERARCHY_BIKE_WHEEL_R) {
-
-				float f = m_pWheels[i].m_pHandling->m_fV_times12 * *(&m_pWheels[i].m_pHandling->m_fV_gearR + m_transmission.m_sGear);
-				f *= min(m_pWheels[i].m_fRpm, 0.f) * *g_pfTimeStep * 0.006f * (m_fGasPedal != 0); //max(fGasPedal, 0.f);
-				m_fChainsetRot = min(f, 0);
-
-				//while (m_fChainsetRot > RAGE_PI)
-				//	m_fChainsetRot -= RAGE_PI * 2;
-
-				break;
-			}
-		}
-		return ret;
-	}
+	virtual char doProcessControl();
 
 	virtual void m78() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m78", nullptr, 0x10); }
 	virtual void m7C() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m7C", nullptr, 0x10); }
 	virtual void m80() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m80", nullptr, 0x10); }
 
-	virtual int prerender() {
-		((int(__thiscall*)(CBmx*, int, int, float, char, void*, void*))g_CVehicle__setBoneRotation)(this, HIERARCHY_BMX_CHAINSET, 0, m_fChainsetRot, false, NULL, NULL);
-		((int(__thiscall*)(CBmx*, int, int, float, char, void*, void*))g_CVehicle__setBoneRotation)(this, HIERARCHY_BMX_PEDAL_L, 0, -m_fChainsetRot, false, NULL, NULL);
-		((int(__thiscall*)(CBmx*, int, int, float, char, void*, void*))g_CVehicle__setBoneRotation)(this, HIERARCHY_BMX_PEDAL_R, 0, -m_fChainsetRot, false, NULL, NULL);
-
-		return ((int(__thiscall*)(CBmx*))(ms_prerender_prev))(this);
-	}
+	virtual int prerender();
 
 	//virtual void m84() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m84", nullptr, 0x10); }
 	virtual void m88() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m88", nullptr, 0x10); }
@@ -252,12 +220,16 @@ struct CBmx : CBike {
 	virtual void m174() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m174", nullptr, 0x10); }
 	virtual void m178() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m178", nullptr, 0x10); }
 	virtual void m17C() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m17C", nullptr, 0x10); }
-	virtual void m180() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m180", nullptr, 0x10); }
+
+	virtual void explodeBike(CEntity* pEntity, int _b, bool _c, int _d, int _e);
+	//virtual void m180() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m180", nullptr, 0x10); }
+	
 	virtual void m184() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m184", nullptr, 0x10); }
+
 	virtual void m188() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m188", nullptr, 0x10); }
 	virtual void m18C() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m18C", nullptr, 0x10); }
 	virtual void m190() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m190", nullptr, 0x10); }
-	virtual void m194() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m194", nullptr, 0x10); }
+	virtual int fix() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m194", nullptr, 0x10); return 0; }
 	virtual void m198() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m198", nullptr, 0x10); }
 	virtual void m19C() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m19C", nullptr, 0x10); }
 	virtual void m1A0() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m1A0", nullptr, 0x10); }
@@ -269,26 +241,110 @@ struct CBmx : CBike {
 	virtual void m1B8() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m1B8", nullptr, 0x10); }
 	virtual void m1BC() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m1BC", nullptr, 0x10); }
 
-	static void initPatch() {
-		regVmtAddr();
-	}
+	static void initPatch();
 
-	static void initVmtAddr() {
-		size_t* bikeVmt = (size_t*)g_vmtAddr_CBike;
-
-		size_t count = 0x1C0 / sizeof size_t;
-		for (size_t i = 0; i < count; i++) {
-			size_t currOffset = i * sizeof size_t;
-			if (currOffset == 0x74)
-				ms_doProcessControl_prev = bikeVmt[i];
-			else if (currOffset == 0x84)
-				ms_prerender_prev = bikeVmt[i];
-			else
-				writeDWORD((size_t)&ms_vmtAddr[i], bikeVmt[i]);
-		}
-
-	}
+	static void initVmtAddr();
 };
+
+
+void CBmx::regVmtAddr() {
+	ms_vmtAddr = *(size_t**)&bmx;
+}
+
+// sets health to NaN
+
+
+// ToDo: Need to add virtual function override for CBmx::processPhysics to add collision for chainset component
+
+char CBmx::doProcessControl() {
+	auto ret = ((char(__thiscall*)(CBike*))(ms_doProcessControl_prev))(this);
+
+	processHealth();
+
+	// ≈сли двигатель заведен
+	if ((m_nbVehicleFlags1_0 & 0x8) != 0) {
+
+		// ≈сли водител€ нет - глушим двигатель
+		if (!m_pDriver)
+			turnEngineOff();
+
+		// если все же водитель есть, заводим его оп€ть (конечно же, не всегда, а с небольшой оптимизацией) чтобы какой-нибудь другой скрипт не смог его заглушить неправильним способом
+		else if (!(*g_pdwGameTimer % 3))
+			turnEngineOn(true);
+	}
+
+	// если двигатель загрушен, но водитель на месте, нужно его завести
+	else if (m_pDriver)
+		turnEngineOn(true);
+
+	// ѕровер€ем хп двигател€ и бензобака. ≈сли они меньше 1к, тогда нужно установить их на 1к
+	//if (!(*g_pdwGameTimer % 3)) {
+	if (m_fPetrolTankHealth < 1000.f)
+		m_fPetrolTankHealth = 1000.f;
+	if (m_transmission.m_fEngineHealth < 1000.f)
+		m_transmission.m_fEngineHealth = 1000.f;
+	//}
+
+
+	m_fChainsetRot = 0.f;
+	for (size_t i = 0; i < m_dwNumWheels; i++) {
+		if (m_pWheels[i].m_dwBoneId == HIERARCHY_BIKE_WHEEL_R) {
+
+			float f = m_pWheels[i].m_pHandling->m_fV_times12 * *(&m_pWheels[i].m_pHandling->m_fV_gearR + m_transmission.m_sGear);
+			f *= min(m_pWheels[i].m_fRpm, 0.f) * *g_pfTimeStep * 0.006f * (m_fGasPedal != 0); //max(fGasPedal, 0.f);
+			m_fChainsetRot = min(f, 0);
+
+			//while (m_fChainsetRot > RAGE_PI)
+			//	m_fChainsetRot -= RAGE_PI * 2;
+
+			break;
+		}
+	}
+	return ret;
+}
+
+int CBmx::prerender() {
+	((int(__thiscall*)(CBmx*, int, int, float, char, void*, void*))g_CVehicle__setBoneRotation)(this, HIERARCHY_BMX_CHAINSET, 0, m_fChainsetRot, false, NULL, NULL);
+	((int(__thiscall*)(CBmx*, int, int, float, char, void*, void*))g_CVehicle__setBoneRotation)(this, HIERARCHY_BMX_PEDAL_L, 0, -m_fChainsetRot, false, NULL, NULL);
+	((int(__thiscall*)(CBmx*, int, int, float, char, void*, void*))g_CVehicle__setBoneRotation)(this, HIERARCHY_BMX_PEDAL_R, 0, -m_fChainsetRot, false, NULL, NULL);
+
+	return ((int(__thiscall*)(CBike*))(ms_prerender_prev))(this);
+}
+
+//virtual void m84() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m84", nullptr, 0x10); }
+
+void CBmx::explodeBike(CEntity* pEntity, int _b, bool _c, int _d, int _e) {
+	
+	// Very stupid way. I want to kill myself for implementing this
+	BYTE cache[sizeof (CBmx)];
+	memcpy(cache, this, sizeof(CBmx));
+	((void(__thiscall*)(CBike*, CEntity*, int, bool, int, int))(ms_explodeBike_prev))(this, pEntity, _b, _c, _d, _e);
+	memcpy(this, cache, sizeof(CBmx));
+	fix();
+}
+
+void CBmx::initPatch() {
+	regVmtAddr();
+}
+
+void CBmx::initVmtAddr() {
+	size_t* bikeVmt = (size_t*)g_vmtAddr_CBike;
+
+	size_t count = 0x1C0 / sizeof size_t;
+	for (size_t i = 0; i < count; i++) {
+		size_t currOffset = i * sizeof size_t;
+		if (currOffset == 0x74)
+			ms_doProcessControl_prev = bikeVmt[i];
+		else if (currOffset == 0x84)
+			ms_prerender_prev = bikeVmt[i];
+		else if (currOffset == 0x180)
+			ms_explodeBike_prev = bikeVmt[i];
+		else
+			writeDWORD((size_t)&ms_vmtAddr[i], bikeVmt[i]);
+	}
+
+}
+
 
 
 size_t* CBmx::ms_vmtAddr;
@@ -296,6 +352,7 @@ CBmx CBmx::bmx;
 
 size_t CBmx::ms_doProcessControl_prev;
 size_t CBmx::ms_prerender_prev;
+size_t CBmx::ms_explodeBike_prev;
 
 
 struct CVehicleFactoryNY {
@@ -325,8 +382,10 @@ struct CVehicleFactoryNY {
 
 			// If it is a bmx, let's set the CBmx class to it along with its virtual table.
 			if (pModelInfo->m_dwTypes[0] == 1 && pModelInfo->m_dwTypes[1] == 6) {
+				auto pBmx = (CBmx*)pVeh;
 				*(size_t**)pVeh = CBmx::ms_vmtAddr; // Virtual fns
-				((CBmx*)pVeh)->initVars(); // And init his vars
+				pBmx->initVars(); // And init his vars
+				pBmx->processHealth();
 			}
 		}
 
@@ -475,7 +534,7 @@ void processBmxFoots(CBmx* pVeh, CPed* pPed, CVehicleModelInfo* pModelInfo) {
 	auto pPedModelInfo = (CBaseModelInfo*)(g_pModelPointers[pPed->m_wModelIndex]);
 
 	Vector3 offset = { 0.04f, 0.f, 0.f };
-	
+
 	if (pModelInfo->m_pBones[HIERARCHY_BMX_PEDAL_L] != -1) {
 		Matrix34 mtx;
 		mtx.identity();
@@ -535,7 +594,25 @@ struct CVehicle_2 : CVehicle {
 };
 size_t CVehicle_2::ms_processBmxFoots;
 
+struct CTransmission_2 : CTransmission {
 
+	static size_t ms_processOverheat;
+
+	void processOverheat(CVehicle* pVehRef) {
+		auto pModelInfo = (CVehicleModelInfo*)(g_pModelPointers[pVehRef->m_wModelIndex]);
+		if (pModelInfo->m_dwTypes[0] == 1 && pModelInfo->m_dwTypes[1] == 6)
+			return;
+
+		((void(__thiscall*)(CTransmission*, CVehicle*))(ms_processOverheat))(this, pVehRef);
+	}
+
+	static void initPatch() {
+		ms_processOverheat = setFnAddrInCallOpcode(g_hookAddr_CTransmission__processOverheat, getThisCallAddr(&processOverheat));
+
+	}
+};
+
+size_t CTransmission_2::ms_processOverheat;
 
 void patch() {
 
@@ -544,6 +621,7 @@ void patch() {
 	CVehicleModelInfo_2::initPatch();
 	CVehicle_2::initPatch();
 	g_readSaveIcon = setFnAddrInCallOpcode(g_hookAddr_readSaveIcon, (size_t)_readSaveIcon);
+	CTransmission_2::initPatch();
 
 }
 

@@ -71,6 +71,7 @@ size_t g_CAnimBlender__getPlayerByAnimId;
 size_t g_hookAddr_findVehEngineStartingPedAnim;
 size_t g_CVehicle__turnEngineOn;
 size_t g_CVehicle__turnEngineOff;
+size_t g_hookAddr_CTransmission__processOverheat;
 
 bool g_bIsCE = false;
 
@@ -420,7 +421,11 @@ DWORD initAddrsDynamicCE() {
 	else
 		result |= 1 << 8;
 
+	g_hookAddr_CTransmission__processOverheat = findPattern("E8 ? ? ? ? 8D B7 ? ? ? ? BB ? ? ? ? 66 83 3E FF 7E 29 83 EC 08 8D 87 ? ? ? ? ");
+	if (!g_hookAddr_CTransmission__processOverheat)
+		result |= 1 << 8;
 
+	
 
 	return result;
 }
