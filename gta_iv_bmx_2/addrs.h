@@ -57,6 +57,7 @@ extern size_t g_hookAddr_findVehEngineStartingPedAnim;
 extern size_t g_CVehicle__turnEngineOn;
 extern size_t g_CVehicle__turnEngineOff;
 extern size_t g_hookAddr_CTransmission__processOverheat;
+extern size_t g_hookAddr_spawnBikeBlowUpFire;
 
 
 //extern size_t g_getDistSqrToCamera;

@@ -24,12 +24,22 @@ struct CVirtualClassesHelper {
 struct CEntity : CVirtualClassesHelper {
 
 
-	BYTE __4[0x1C];
-	Matrix34* m_pCoords;
-	BYTE __24[0xA];
-	WORD m_wModelIndex;
+	PADDING(0x1C); // +4
+	Matrix34* m_pCoords; // +20
+	DWORD m_dwFlags; // +24
+	DWORD m_dwFlags2; // + 28
+	PADDING(0x2); // +2C
+	WORD m_wModelIndex; // +2E
 
 	PADDING(0x40); // +30
+
+	
+	__forceinline void setHasExploded(bool b) {
+		if (b)
+			m_dwFlags2 |= 0x400;
+		else
+			m_dwFlags2 &= ~0x400;
+	}
 
 };
 
@@ -92,6 +102,13 @@ struct CPhysical : CDynamicEntity {
 	PADDING(0xC); // +10C
 	DWORD m_dwPhysicalFlags; // +118
 	PADDING(0xA4); // +10C
+
+	__forceinline void setRenderScorched(bool b) {
+		if (b)
+			m_dwPhysicalFlags |= 0x10000;
+		else
+			m_dwPhysicalFlags &= ~0x10000;
+	}
 };
 
 STATIC_ASSERT_EXPR(offsetof(CPhysical, m_dwPhysicalFlags) == 0x118);
@@ -518,6 +535,10 @@ struct CVehicle : CPhysical {
 	__forceinline bool isDriver(CPed* pPed) const { return pPed && m_pDriver == pPed; }
 	__forceinline char turnEngineOn(bool _b) { return ((char(__thiscall*)(CVehicle*, bool))(g_CVehicle__turnEngineOn))(this, _b); }
 	__forceinline void turnEngineOff() { ((void(__thiscall*)(CVehicle*))(g_CVehicle__turnEngineOff))(this); }
+
+	__forceinline int setBoneRotation(int boneId, int axis, float val, bool bSet, Vector3* pOffset, Vector3* pRotOffset) {
+		return ((int(__thiscall*)(CVehicle*, int, int, float, char, void*, void*))g_CVehicle__setBoneRotation)(this, boneId, axis, val, bSet, pOffset, pRotOffset);
+	}
 
 };
 

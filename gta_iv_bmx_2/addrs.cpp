@@ -72,6 +72,7 @@ size_t g_hookAddr_findVehEngineStartingPedAnim;
 size_t g_CVehicle__turnEngineOn;
 size_t g_CVehicle__turnEngineOff;
 size_t g_hookAddr_CTransmission__processOverheat;
+size_t g_hookAddr_spawnBikeBlowUpFire;
 
 bool g_bIsCE = false;
 
@@ -425,7 +426,22 @@ DWORD initAddrsDynamicCE() {
 	if (!g_hookAddr_CTransmission__processOverheat)
 		result |= 1 << 8;
 
-	
+	g_hookAddr_spawnBikeBlowUpFire = findPattern("55 8B EC 83 E4 F0 83 EC 18 56 57 8B F9 8B 47 28 25 ? ? ? ? 3D ? ? ? ? 0F 84 ? ? ? ? F7 87 ? ? ? ? ? ? ? ? ");
+	if (g_hookAddr_spawnBikeBlowUpFire) {
+		g_hookAddr_spawnBikeBlowUpFire += 0x25C; // call
+		if (*(BYTE*)g_hookAddr_spawnBikeBlowUpFire != 0xE8) {
+			g_hookAddr_spawnBikeBlowUpFire = 0;
+			result |= 1 << 8;
+		}
+		if (*(WORD*)(g_hookAddr_spawnBikeBlowUpFire + 0xA + 1) != 0x14) {
+			g_hookAddr_spawnBikeBlowUpFire = 0;
+			result |= 1 << 8;
+		}
+	}
+	else
+		result |= 1 << 8;
+
 
 	return result;
 }
+

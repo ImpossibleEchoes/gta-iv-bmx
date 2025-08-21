@@ -23,7 +23,8 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 	case DLL_PROCESS_ATTACH:
 		//enableConsole();
 		//system("pause");
-		initAddrsDynamicCE();
+		if (initAddrsDynamicCE())
+			MessageBoxA(nullptr, "Error?", nullptr, 0x10);
 		bmx_patch::patch();
 		break;
 	case DLL_THREAD_ATTACH:
