@@ -1,5 +1,6 @@
 ﻿#include "rage_math.h"
 
+
 void Vector3::normalize() {
 	float y; // xmm2_4
 	float x; // xmm3_4

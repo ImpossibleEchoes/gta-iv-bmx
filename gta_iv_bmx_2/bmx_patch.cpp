@@ -46,6 +46,54 @@ tComponentInfo g_bmxComponents[]{
 
 };
 
+struct alignas(0x10) CHandlingBmx {
+	char m_szBaseHandlingId[0x10];
+	float m_fJumpForce;
+
+	CHandlingBmx() {
+		m_szBaseHandlingId[0] = '\0';
+		m_fJumpForce = 0.f;
+	}
+
+};
+
+static struct alignas(0x10) CHandlingBmxMgr {
+
+	static CHandlingBmx ms_handlings[];
+	static size_t ms_numHandlings;
+
+	static CHandlingBmx* getHandling(const char* id) {
+		for (size_t i = 1; i < ms_numHandlings; i++) {
+			if (!strcmp(id, ms_handlings[i].m_szBaseHandlingId)) {
+				return ms_handlings + i;
+			}
+		}
+		return nullptr;
+	}
+
+	static CHandlingBmx* allocateHandling(const char* id) {
+		if (auto pHandling = getHandling(id))
+			return pHandling;
+
+		strcpy_s(ms_handlings[ms_numHandlings].m_szBaseHandlingId, sizeof ms_handlings[ms_numHandlings].m_szBaseHandlingId, id);
+		return &ms_handlings[ms_numHandlings++];
+	}
+
+	static CHandlingBmx* getHandlingAlways(const char* id) {
+		return allocateHandling(id);
+	}
+
+	static __forceinline CHandlingBmx* getBaseHandling() { return &ms_handlings[0]; }
+
+	static void init() {
+		allocateHandling("DO_NOT_USE"); // base bmx handling. Bmx can't exist without it, so we need a base entry that will be used if the required one is not there
+	}
+
+};
+
+CHandlingBmx CHandlingBmxMgr::ms_handlings[0xff];
+size_t CHandlingBmxMgr::ms_numHandlings = 0;
+
 struct CVehicleModelInfo_2 : CVehicleModelInfo {
 	static size_t ms_setComponents;
 	static size_t ms_findVehEngineStartingPedAnim;
@@ -83,15 +131,31 @@ size_t CVehicleModelInfo_2::ms_findVehEngineStartingPedAnim;
 struct CBmx : CBike {
 	static size_t ms_doProcessControl_prev;
 	static size_t ms_prerender_prev;
+	static size_t ms_updateAnim_prev;
+	static size_t ms_m8C_prev;
 	static size_t ms_blowUp_prev;
 	static size_t ms_fix_prev;
+	static size_t ms_processPhysics_prev;
 
 	// Bmx vars start here
 	float m_fChainsetRot;
+	DWORD m_StartJumpTime;
+	float m_fJumpForce;
+	CHandlingBmx* m_pBmxHandling;
+	bool m_bJumpKeyPressed;
+	bool m_bStopJumpAnim;
+	bool m_bApplyJumpForce;
+
 
 	// We dont use a constructor
 	void initVars() {
 		m_fChainsetRot = 0.f;
+		m_bJumpKeyPressed = false;
+		m_bStopJumpAnim = false;
+		m_bApplyJumpForce = false;
+		m_StartJumpTime = 0;
+		m_fJumpForce = 0.f;
+		m_pBmxHandling = nullptr;
 	}
 
 	static CBmx bmx;
@@ -114,8 +178,191 @@ struct CBmx : CBike {
 				*(DWORD*)&m_pWheels[i].m_fTyreHealth = ~0;
 		}
 
-		//if (!(m_dwPhysicalFlags & PHYSICALFLAG_IGNORE_EXPLOSION_DAMAGE))
-		//	m_dwPhysicalFlags |= PHYSICALFLAG_IGNORE_EXPLOSION_DAMAGE;
+	}
+
+	CAnimPlayer* spawnJumpAnim() {
+		auto pModelInfo = (CVehicleModelInfo*)(g_pModelPointers[m_wModelIndex]);
+
+		auto pAnim = getAnimByIdAndHash(pModelInfo->m_AnimGroupId, 0xE50B741A); // jump2
+
+		if (pAnim) {
+			if (m_pDriver) {
+				auto pAnimPlayer = m_pDriver->m_pAnimBlender->findAnimInBlend(pAnim);
+
+				if (!pAnimPlayer) {
+					pAnimPlayer = m_pDriver->m_pAnimBlender->blendAnimation(pAnim, 0x804000 | 0x8000, 2, -4.f, -1, -1, nullptr, nullptr, pModelInfo->m_AnimGroupId, 0xE50B741A);
+
+					if (pAnimPlayer) {
+
+						pAnimPlayer->m_fAnimCurrentTime = 0.f;
+						pAnimPlayer->m_fAnimCurrentTimeOld = 0.f;
+
+						pAnimPlayer->_f5C = 1.f;
+						pAnimPlayer->m_dwFlags |= 0x10;
+
+						return pAnimPlayer;
+					}
+				}
+
+			}
+		}
+
+		return nullptr;
+
+	}
+
+	void applyJumpForce2(float force) {
+
+		// We use the vector up to make a jerk upward relative to the physical body
+		Vector3 vec = { 1.3f * force,1.3f * force,1.3f * force };
+		vec.x *= m_pCoords->c.x;
+		vec.y *= m_pCoords->c.y;
+		vec.z *= m_pCoords->c.z;
+
+		// We give up the old velocity so as not to lose the previous speed of the body in space
+		auto pCollider = getCollider();
+		if (pCollider) {
+			vec.x += pCollider->m_vecVelocity.x;
+			vec.y += pCollider->m_vecVelocity.y;
+			vec.z += pCollider->m_vecVelocity.z;
+		}
+
+		setInitialVelocity(&vec);
+
+		// Also add a little rotation speed
+		//if(!pCollider)
+			pCollider = getCollider();
+		if (pCollider) {
+
+			float speed = pCollider->m_vecRotateVelocity.x * m_pCoords->a.x + pCollider->m_vecRotateVelocity.y * m_pCoords->a.y + pCollider->m_vecRotateVelocity.z * m_pCoords->a.z;
+
+			Vector3 pNewVec = pCollider->m_vecRotateVelocity;
+
+			if (fabs(speed) < 1.f) {
+				speed = copysignf(-fabsf(speed) + 1.f, speed);
+
+				if (force > 3.2f)
+					force = 3.2f;
+				speed *= 0.5f * (force * (1 / 3.2f));
+
+				// Use vector for mask
+				pNewVec.x += speed * m_pCoords->a.x;
+				pNewVec.y += speed * m_pCoords->a.y;
+				pNewVec.z += speed * m_pCoords->a.z;
+
+				setInitialRotateVelocity(&pNewVec);
+			}
+
+
+		}
+	}
+
+	// NOTE It should be called only from processPhysics fn
+	void applyJumpForce() {
+
+		// Получаем силу прыжка
+		float force = 0.f;
+		for (size_t i = 0; i < m_dwNumWheels; i++)
+			if (m_pWheels[i].m_bTouchesGround)
+				force += 0.5f;
+		
+		force *= m_fJumpForce;
+		m_fJumpForce = 0.f;
+
+		force *= m_pBmxHandling->m_fJumpForce;
+
+		if (force > 0.f)
+			applyJumpForce2(force);
+	}
+
+	CAnimPlayer* getJumpAnimInDriverBlend() {
+		if (m_pDriver) {
+			auto pModelInfo = (CVehicleModelInfo*)(g_pModelPointers[m_wModelIndex]);
+			auto pAnim = getAnimByIdAndHash(pModelInfo->m_AnimGroupId, 0xE50B741A); // jump2
+			if (pAnim)
+				return m_pDriver->m_pAnimBlender->findAnimInBlend(pAnim);
+		}
+		return nullptr;
+	}
+
+	void processJumpAnim() {
+
+		if (m_pDriver) {
+			auto pPad = m_pDriver->getPad();
+
+			if (pPad) {
+
+				if (pPad->m_aValues[44].isJustPressed()) {
+					m_bJumpKeyPressed = m_pDriver->isTaskActive(709);
+
+					if (m_bJumpKeyPressed) {
+						CAnimPlayer* pAnimPlayer = nullptr;
+						if (pAnimPlayer = getJumpAnimInDriverBlend()) {
+							if (pAnimPlayer->m_dwFlags2 & 0x4)
+								pAnimPlayer = spawnJumpAnim();
+						}
+						else
+							pAnimPlayer = spawnJumpAnim();
+
+						if (pAnimPlayer)
+							m_StartJumpTime = *g_pdwGameTimer;
+					}
+				}
+				else if (pPad->m_aValues[44].isJustReleased()) {
+					m_bJumpKeyPressed = false;
+					if (m_StartJumpTime != 0) {
+						float force2 = (float)(*g_pdwGameTimer - m_StartJumpTime) * 0.004f;
+						m_StartJumpTime = 0;
+						if (force2 < 0.5f)
+							force2 = 0.5;
+						else if (force2 > 1.f)
+							force2 = 1.;
+
+						m_fJumpForce = force2;
+					}
+				}
+			}
+
+		}
+		else
+			m_bJumpKeyPressed = false;
+
+		m_bStopJumpAnim = false;
+
+
+		if (m_pDriver) {
+
+			if (auto pAnimPlayer = getJumpAnimInDriverBlend()) {
+				if (m_fGasPedal < 0.f || m_transmission.m_sGear == 0) {
+					m_transmission.m_sGear = 1;
+					m_fGasPedal = 0.f;
+				}
+
+				//if (!false) {
+				if (!m_bJumpKeyPressed) {
+					float fWhere;
+					if (pAnimPlayer->getAnimEventTime(1 << 30, &fWhere, 0.f, 1.f)) {
+						if (fWhere > pAnimPlayer->m_fAnimCurrentTimeOld && fWhere <= pAnimPlayer->m_fAnimCurrentTime) {
+							//applyJumpForce();
+							m_bApplyJumpForce = true;
+						}
+					}
+				}
+				else {
+					m_bStopJumpAnim = true;
+
+				}
+
+			}
+			// Если есть прыжок, значит задный ход уже заблокирован, и в этом блоке не будет смысла
+			// Блокируем задний ход когда reverse анимация не может запуститься (например, когда говорит по телефону, или стреляет. Эти анимации перекрывают анимацию заднего хода)
+			else if (!m_pDriver->isTaskActive(709) && (m_fGasPedal < 0.f || m_transmission.m_sGear == 0)) {
+				m_transmission.m_sGear = 1;
+				m_fGasPedal = 0.f;
+			}
+
+		}
+
 	}
 
 	// ToDo: Need to add virtual function override for CBmx::processPhysics to add collision for chainset component
@@ -159,8 +406,13 @@ struct CBmx : CBike {
 	virtual int prerender();
 
 	//virtual void m84() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m84", nullptr, 0x10); }
-	virtual void m88() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m88", nullptr, 0x10); }
-	virtual void m8C() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m8C", nullptr, 0x10); }
+	virtual void updateAnim();
+
+	//virtual void m88() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m88", nullptr, 0x10); }
+	//virtual void m8C() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m8C", nullptr, 0x10); }
+
+	virtual int m8C(int a2, int a3, int a4, int a5);
+
 	virtual void m90() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m90", nullptr, 0x10); }
 	virtual void m94() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m94", nullptr, 0x10); }
 	virtual void m98() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m98", nullptr, 0x10); }
@@ -190,7 +442,10 @@ struct CBmx : CBike {
 	virtual void mF8() { MessageBoxA(nullptr, "bad vmt addr in CBmx::mF8", nullptr, 0x10); }
 	virtual void mFC() { MessageBoxA(nullptr, "bad vmt addr in CBmx::mFC", nullptr, 0x10); }
 	virtual void m100() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m100", nullptr, 0x10); }
-	virtual void m104() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m104", nullptr, 0x10); }
+
+	virtual int processPhysics(float fTimeStep, bool bCanPostpone, int nTimeSlice);
+
+	//virtual void m104() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m104", nullptr, 0x10); }
 	virtual void m108() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m108", nullptr, 0x10); }
 	virtual void m10C() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m10C", nullptr, 0x10); }
 	virtual void m110() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m110", nullptr, 0x10); }
@@ -255,69 +510,91 @@ void CBmx::regVmtAddr() {
 // sets health to NaN
 
 
-// ToDo: Need to add virtual function override for CBmx::processPhysics to add collision for chainset component
 
 char CBmx::doProcessControl() {
+
 	auto ret = ((char(__thiscall*)(CBike*))(ms_doProcessControl_prev))(this); // CBike::doProcessControl
+
+	if(m_pBmxHandling->m_fJumpForce > 0.f)
+		processJumpAnim();
 
 	processHealth();
 
-	// Если двигатель заведен
+	// If the engine is on
 	if ((m_nbVehicleFlags1_0 & 0x8) != 0) {
 
-		// Если водителя нет - глушим двигатель
+		// If there is no driver turn off the engine
 		if (!m_pDriver)
 			turnEngineOff();
 
-		// если все же водитель есть, заводим его опять (конечно же, не всегда, а с небольшой оптимизацией) чтобы какой-нибудь другой скрипт не смог его заглушить неправильним способом
+		// If the driver is still there, we start it again (of course, not always, but with a little optimization) so that some other script cannot shut it down in the wrong way
 		else if (!(*g_pdwGameTimer % 3))
 			turnEngineOn(true);
 	}
 
-	// если двигатель загрушен, но водитель на месте, нужно его завести
+	// If the engine is off but the driver is still there, you need to start it
 	else if (m_pDriver)
 		turnEngineOn(true);
 
-	// Now it's in processHealth fn
-	//// Проверяем хп двигателя и бензобака. Если они меньше 1к, тогда нужно установить их на 1к
-	//	if (!(*g_pdwGameTimer % 3)) {
-	//	if (m_fPetrolTankHealth < 1000.f)
-	//		m_fPetrolTankHealth = 1000.f;
-	//	if (m_transmission.m_fEngineHealth < 1000.f)
-	//		m_transmission.m_fEngineHealth = 1000.f;
-	//}
+	// If the driver is not sitting, we reset the pedal angle
+	if ((m_pDriver && m_pDriver->isTaskActive(0x2E2)) || !m_pDriver) {
+		float rot = 0.f;
+		if (m_fChainsetRot != rot)
+			m_fChainsetRot = smoothDampAngle(rot, m_fChainsetRot, 0.0067f, *g_pfTimeStep);
+	}
+
+	// If the driver is preparing to jump
+	else if (getJumpAnimInDriverBlend()) {
+		float rot = RAGE_PI * 0.5f;
+		if(m_fChainsetRot != rot)
+			m_fChainsetRot = smoothDampAngle(rot, m_fChainsetRot, 0.0067f, *g_pfTimeStep);
+	}
+	else {
+
+		for (size_t i = 0; i < m_dwNumWheels; i++) {
+			if (m_pWheels[i].m_dwBoneId == HIERARCHY_BIKE_WHEEL_R) {
+
+				float f = m_pWheels[i].m_pHandling->m_fV_times12 * *(&m_pWheels[i].m_pHandling->m_fV_gearR + m_transmission.m_sGear);
+				f *= min(m_pWheels[i].m_fRpm, 0.f) * *g_pfTimeStep * 0.006f * (m_fGasPedal != 0); //max(fGasPedal, 0.f);
+				m_fChainsetRot -= min(f, 0);
 
 
-	m_fChainsetRot = 0.f;
-	for (size_t i = 0; i < m_dwNumWheels; i++) {
-		if (m_pWheels[i].m_dwBoneId == HIERARCHY_BIKE_WHEEL_R) {
+				while (m_fChainsetRot > RAGE_PI)
+					m_fChainsetRot -= RAGE_PI * 2;
 
-			float f = m_pWheels[i].m_pHandling->m_fV_times12 * *(&m_pWheels[i].m_pHandling->m_fV_gearR + m_transmission.m_sGear);
-			f *= min(m_pWheels[i].m_fRpm, 0.f) * *g_pfTimeStep * 0.006f * (m_fGasPedal != 0); //max(fGasPedal, 0.f);
-			m_fChainsetRot = min(f, 0);
+				//printf("%f\n", m_fChainsetRot);
 
-			//while (m_fChainsetRot > RAGE_PI)
-			//	m_fChainsetRot -= RAGE_PI * 2;
-
-			break;
+				break;
+			}
 		}
 	}
 	return ret;
 }
 
+void CBmx::updateAnim() {
+	((void(__thiscall*)(CDynamicEntity*))(ms_updateAnim_prev))(this); // CDynamicEntity::updateAnim
+
+}
+
 int CBmx::prerender() {
-	setBoneRotation(HIERARCHY_BMX_CHAINSET, 0, m_fChainsetRot, false, nullptr, nullptr);
-	setBoneRotation(HIERARCHY_BMX_PEDAL_L, 0, -m_fChainsetRot, false, nullptr, nullptr);
-	setBoneRotation(HIERARCHY_BMX_PEDAL_R, 0, -m_fChainsetRot, false, nullptr, nullptr);
+	setBoneRotation(HIERARCHY_BMX_CHAINSET, 0, -m_fChainsetRot, true, nullptr, nullptr);
+	setBoneRotation(HIERARCHY_BMX_PEDAL_L, 0, m_fChainsetRot, true, nullptr, nullptr);
+	setBoneRotation(HIERARCHY_BMX_PEDAL_R, 0, m_fChainsetRot, true, nullptr, nullptr);
 
 	return ((int(__thiscall*)(CBike*))(ms_prerender_prev))(this); // CBike::prerender
 }
+
+int CBmx::m8C(int a2, int a3, int a4, int a5) {
+
+	return ((int(__thiscall*)(CBike*, int, int, int, int))(ms_m8C_prev))(this, a2, a3, a4, a5); // CBike::m8C
+}
+
 
 //virtual void m84() { MessageBoxA(nullptr, "bad vmt addr in CBmx::m84", nullptr, 0x10); }
 
 int CBmx::fix() {
 	auto result = ((int(__thiscall*)(CBike*))(ms_fix_prev))(this); // CBike::fix
-
+	m_fChainsetRot = 0.f;
 	setRenderScorched(false);
 
 	return result;
@@ -344,6 +621,31 @@ void CBmx::blowUp(CEntity* pEntity, int _b, bool _c, int _d, int _e) {
 	processHealth();
 }
 
+int CBmx::processPhysics(float fTimeStep, bool bCanPostpone, int nTimeSlice) {
+
+
+		// Turn on the handbrake if it is pressed and if the BMX can jump
+		if (m_nbVehicleFlags1_0 & 0x80 && m_pBmxHandling->m_fJumpForce > 0.f)
+			m_nbVehicleFlags1_0 &= ~0x80;
+
+
+		if (m_pDriver) {
+
+			// If the previous function gave us a signal to create a jump impulse, we create it
+			if (m_bApplyJumpForce) {
+				applyJumpForce();
+				m_bApplyJumpForce = false; // Just once
+			}
+		}
+
+		// if there is no driver, turn off the handbrake(why is it on?)
+		else if (m_nbVehicleFlags1_0 & 0x80)
+				m_nbVehicleFlags1_0 &= ~0x80;
+
+
+	return ((int(__thiscall*)(CBike*, float, bool, int))(ms_processPhysics_prev))(this, fTimeStep, bCanPostpone, nTimeSlice); // CBike::processPhysics
+}
+
 void CBmx::initPatch() {
 	regVmtAddr();
 }
@@ -358,6 +660,12 @@ void CBmx::initVmtAddr() {
 			ms_doProcessControl_prev = bikeVmt[i];
 		else if (currOffset == 0x84)
 			ms_prerender_prev = bikeVmt[i];
+		else if (currOffset == 0x88)
+			ms_updateAnim_prev = bikeVmt[i];
+		else if (currOffset == 0x8C)
+			ms_m8C_prev = bikeVmt[i];
+		else if (currOffset == 0x104)
+			ms_processPhysics_prev = bikeVmt[i];
 		else if (currOffset == 0x180)
 			ms_blowUp_prev = bikeVmt[i];
 		else if (currOffset == 0x194)
@@ -375,8 +683,11 @@ CBmx CBmx::bmx;
 
 size_t CBmx::ms_doProcessControl_prev;
 size_t CBmx::ms_prerender_prev;
+size_t CBmx::ms_updateAnim_prev;
+size_t CBmx::ms_m8C_prev;
 size_t CBmx::ms_blowUp_prev;
 size_t CBmx::ms_fix_prev;
+size_t CBmx::ms_processPhysics_prev;
 
 
 struct CVehicleFactoryNY {
@@ -410,6 +721,10 @@ struct CVehicleFactoryNY {
 				*(size_t**)pVeh = CBmx::ms_vmtAddr; // Virtual fns
 				pBmx->initVars(); // And init his vars
 				pBmx->processHealth();
+
+				pBmx->m_pBmxHandling = CHandlingBmxMgr::getHandling(pBmx->m_pHandling->m_pszId);
+				if (!pBmx->m_pBmxHandling)
+					pBmx->m_pBmxHandling = CHandlingBmxMgr::getBaseHandling();
 			}
 		}
 
@@ -433,123 +748,133 @@ int _readSaveIcon() {
 	return ((int(*)())(g_readSaveIcon))();
 }
 
-__forceinline float lerp(float end, float  start, float t) {
-	return start + (end - start) * t;
-}
+__forceinline float lerp(float end, float  start, float t) { return start + (end - start) * t; }
 
 void processBmxFoots(CBmx* pVeh, CPed* pPed, CVehicleModelInfo* pModelInfo) {
 
 	float blendL = 1.f;
 	float blendR = 1.f;
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(384, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(385, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
 
 
-	if (blendL <= 0.f && blendR <= 0.f)
-		return;
+	auto pJumpPlayer = pVeh->getJumpAnimInDriverBlend();
 
-	if (pPed->m_pAnimBlender->getPlayerByAnimId(422, 0)) {}
-	else if (pPed->m_pAnimBlender->getPlayerByAnimId(399, 0)) {}
-	else if (pPed->m_pAnimBlender->getPlayerByAnimId(391, 0)) {}
-	else if (pPed->m_pAnimBlender->getPlayerByAnimId(385, 0)) {}
-	else if (pPed->m_pAnimBlender->getPlayerByAnimId(377, 0)) {}
-	else if (pPed->m_pAnimBlender->getPlayerByAnimId(378, 0)) {}
-	else if (pPed->m_pAnimBlender->getPlayerByAnimId(373, 0)) {}
-	else if (pPed->m_pAnimBlender->getPlayerByAnimId(380, 0)) {}
-	else if (pPed->m_pAnimBlender->getPlayerByAnimId(381, 0)) {}
-	else if (pPed->m_pAnimBlender->getPlayerByAnimId(382, 0)) {}
-	else if (pPed->m_pAnimBlender->getPlayerByAnimId(383, 0)) {}
-	else if (pPed->m_pAnimBlender->getPlayerByAnimId(384, 0)) {}
-	else
-		return;
+		// 1
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(384, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(385, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
 
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(422, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(388, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(389, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(365, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(366, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(369, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(370, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(332, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(333, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(334, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(335, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(367, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(368, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(371, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(372, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
-	if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(372, 0)) {
-		float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
-		blendL = min(newL, blendL);
-		blendR = min(newL, blendR);
-	}
 
+		if (blendL <= 0.f && blendR <= 0.f && !pJumpPlayer)
+			return;
+
+		if (pPed->m_pAnimBlender->getPlayerByAnimId(422, 0)) {}
+		else if (pPed->m_pAnimBlender->getPlayerByAnimId(399, 0)) {}
+		else if (pPed->m_pAnimBlender->getPlayerByAnimId(391, 0)) {}
+		else if (pPed->m_pAnimBlender->getPlayerByAnimId(385, 0)) {}
+		else if (pPed->m_pAnimBlender->getPlayerByAnimId(377, 0)) {}
+		else if (pPed->m_pAnimBlender->getPlayerByAnimId(378, 0)) {}
+		else if (pPed->m_pAnimBlender->getPlayerByAnimId(373, 0)) {}
+		else if (pPed->m_pAnimBlender->getPlayerByAnimId(380, 0)) {}
+		else if (pPed->m_pAnimBlender->getPlayerByAnimId(381, 0)) {}
+		else if (pPed->m_pAnimBlender->getPlayerByAnimId(382, 0)) {}
+		else if (pPed->m_pAnimBlender->getPlayerByAnimId(383, 0)) {}
+		else if (pPed->m_pAnimBlender->getPlayerByAnimId(384, 0)) {}
+
+		else if(!pJumpPlayer)
+			return;
+
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(422, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(388, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(389, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(365, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(366, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(369, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(370, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(332, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(333, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(334, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(335, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(367, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(368, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(371, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(372, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+		if (auto pAnmPlyr = pPed->m_pAnimBlender->getPlayerByAnimId(372, 0)) {
+			float newL = -pAnmPlyr->m_fBlendAmount + 1.f;
+			blendL = min(newL, blendL);
+			blendR = min(newL, blendR);
+		}
+
+		// 2
+		if (auto pAnmPlyr = pVeh->getJumpAnimInDriverBlend()) {
+			float newL = pAnmPlyr->m_fBlendAmount;
+			blendL = max(newL, blendL);
+			blendR = max(newL, blendR);
+		}
 
 	// If we don't need to use ik, we skip this frame
 	if (blendL <= 0.f && blendR <= 0.f)
@@ -641,7 +966,7 @@ size_t CTransmission_2::ms_processOverheat;
 struct tUnkFire {
 	static size_t ms_spawnBlowUpFire_origcall;
 
-	int spawnBlowUpFx(CBmx* a2, int a3, int a4, int a5, int a6, int a7, char a8, int a9, float a10, float a11, char a12) {
+	int spawnBlowUpFx(CBmx* a2, int a3, int a4 /*ped?*/, int a5, int a6, int a7, char a8, int a9, float a10, float a11, char a12) {
 		auto pModelInfo = (CVehicleModelInfo*)(g_pModelPointers[a2->m_wModelIndex]);
 		if (pModelInfo->m_dwTypes[0] == 1 && pModelInfo->m_dwTypes[1] == 6)
 			return ~0;
@@ -657,6 +982,147 @@ struct tUnkFire {
 };
 size_t tUnkFire::ms_spawnBlowUpFire_origcall;
 
+
+// Block shots and exits while jumping
+struct CTaskComplexPlayerDrive {
+	BYTE __0[0x8];
+	DWORD _f8;
+	BYTE __C[0x1C];
+	CVehicle* m_pVehicleRef;
+
+	static size_t ms_controlSubTask_origcall;
+
+	int controlSubTask(CPed* pPed) {
+
+		if (m_pVehicleRef->m_pDriver && m_pVehicleRef->m_pDriver == pPed) {
+			auto pModelInfo = (CVehicleModelInfo*)(g_pModelPointers[m_pVehicleRef->m_wModelIndex]);
+			if (pModelInfo->m_dwTypes[0] == 1 && pModelInfo->m_dwTypes[1] == 6) {
+				auto pBmx = (CBmx*)m_pVehicleRef;
+
+				
+				if (pBmx->getJumpAnimInDriverBlend()) {
+					return _f8;
+				}
+
+			}
+
+		}
+
+		return ((int(__thiscall*)(CTaskComplexPlayerDrive*, CPed*))(ms_controlSubTask_origcall))(this, pPed);
+	}
+
+	static void initPatch() {
+		ms_controlSubTask_origcall = writeDWORD(g_vmtAddr_CTaskComplexPlayerDrive__controlSubTask, getThisCallAddr(&controlSubTask));
+	}
+};
+
+size_t CTaskComplexPlayerDrive::ms_controlSubTask_origcall;
+
+// Главная ошибка в этом скрипте. CAnimPlayer::updatePhase вызывается ДО всех моих виртуальных функций из CBmx. Я не знаю как это сделать в CBmx методах
+// Мне пришлось говнокодить, чтобы исправить остановку прыжка. Она, в принципе, не слишком затратная, учитывая, какие действия выполняются в оригинальной функции
+struct CAnimPlayer_fixJumpAnim : CAnimPlayer {
+
+	static size_t ms_update_origcall;
+
+	void update(CDynamicEntity* pBase) {
+		((void(__thiscall*)(CAnimPlayer_fixJumpAnim*, CDynamicEntity*))(ms_update_origcall))(this, pBase);
+
+		if ((pBase->m_dwFlags2 & 0x3C0) == 0xC0) { // ped or playerPed
+			auto pPed = static_cast<CPed*>(pBase);
+
+			if (pPed->m_pVehRef && pPed->m_pVehRef->m_pDriver && pPed->m_pVehRef->m_pDriver == pPed) {
+				auto pModelInfo = reinterpret_cast<CVehicleModelInfo*>(g_pModelPointers[pPed->m_pVehRef->m_wModelIndex]);
+				if (pModelInfo->m_dwTypes[0] == 1 && pModelInfo->m_dwTypes[1] == 6) {
+					auto pBmx = static_cast<CBmx*>(pPed->m_pVehRef);
+
+
+					if (pBmx->m_bStopJumpAnim) {
+						if (auto pAnimPlayer = pBmx->getJumpAnimInDriverBlend()) {
+
+							float fWhere;
+							if (pAnimPlayer->getAnimEventTime(1 << 31, &fWhere, 0.f, 1.f))
+								if (fWhere >= pAnimPlayer->m_fAnimCurrentTimeOld && fWhere < pAnimPlayer->m_fAnimCurrentTime)
+									pAnimPlayer->m_fAnimCurrentTime = pAnimPlayer->m_fAnimCurrentTimeOld = fWhere;
+
+						}
+
+					}
+
+				}
+
+			}
+
+		}
+
+	}
+
+	static void initPatch() {
+		ms_update_origcall = setFnAddrInCallOpcode(g_hookAddr_CAnimPlayer__update, getThisCallAddr(&update));
+	}
+};
+size_t CAnimPlayer_fixJumpAnim::ms_update_origcall;
+
+struct CHandling {
+
+	static size_t ms_getHandlingLine_origcall;
+
+	static char* __cdecl getHandlingLine(void* hFile, bool _b) {
+		
+		// 
+		auto line = ((char*(__cdecl*)(void*, bool))(ms_getHandlingLine_origcall))(hFile, _b);
+
+		// If it's bmx, let's take over reading it so as not to cause an error
+		if (line[0] == '?') {
+			char tokChars[4];
+			strcpy(tokChars, " \t");
+
+
+			char* tok = strtok(line, tokChars);
+			tok = strtok(nullptr, tokChars);
+
+#ifdef _DEBUG
+			CHandlingBmx* pHandling = CHandlingBmxMgr::getHandling(tok);
+			if (!pHandling) {
+				printf("reading %s\n", tok);
+				pHandling = CHandlingBmxMgr::allocateHandling(tok);
+			}
+			else
+				printf("updating %s\n", tok);
+#else
+			CHandlingBmx* pHandling = CHandlingBmxMgr::getHandlingAlways(tok);
+#endif // _DEBUG
+
+			tok = strtok(nullptr, tokChars);
+
+
+			int idx = 1;
+			do {
+				switch (idx) {
+				case 1: // jumpForce
+					pHandling->m_fJumpForce = atof(tok);
+					break;
+				default:
+					break;
+				}
+
+				tok = strtok(nullptr, tokChars);
+				idx++;
+			} while (tok);
+
+			// Replace the first character with a comment so the game will skip it
+			line[0] = '#';
+		}
+		return line;
+	}
+
+	static void initPatch() {
+		CHandlingBmxMgr::init();
+		ms_getHandlingLine_origcall = setFnAddrInCallOpcode(g_hookAddr_readHandling, (size_t)getHandlingLine);
+		setFnAddrInCallOpcode(g_hookAddr_readHandlingFirstLine, (size_t)getHandlingLine);
+	}
+};
+size_t CHandling::ms_getHandlingLine_origcall;
+
 void patch() {
 
 	CVehicleFactoryNY::initPatch();
@@ -666,7 +1132,9 @@ void patch() {
 	g_readSaveIcon = setFnAddrInCallOpcode(g_hookAddr_readSaveIcon, (size_t)_readSaveIcon);
 	CTransmission_2::initPatch();
 	tUnkFire::initPatch();
-
+	CTaskComplexPlayerDrive::initPatch();
+	CAnimPlayer_fixJumpAnim::initPatch();
+	CHandling::initPatch();
 }
 
 }

@@ -59,6 +59,20 @@ extern size_t g_CVehicle__turnEngineOff;
 extern size_t g_hookAddr_CTransmission__processOverheat;
 extern size_t g_hookAddr_spawnBikeBlowUpFire;
 
+extern size_t g_CEntity__getCollider;
+extern size_t g_CPhysical__setInitialVelocity;
+extern size_t g_CPhysical__setInitialRotateVelocity;
+
+extern size_t g_vmtAddr_CTaskComplexPlayerDrive__controlSubTask;
+extern size_t g_CPed__getPad2;
+extern size_t g_CAnimAssociations__getAnimIdFromAnimAssociationGroupId;
+extern size_t g_CAnimManager__getAnimByIdAndHash;
+extern size_t g_CAnimBlender__blendAnimation;
+extern size_t g_CAnimPlayer__getAnimEventTime;
+extern size_t g_vmt_CPed__updateAnim;
+extern size_t g_hookAddr_CAnimPlayer__update;
+extern size_t g_hookAddr_readHandling;
+extern size_t g_hookAddr_readHandlingFirstLine;
 
 //extern size_t g_getDistSqrToCamera;
 //extern size_t g_ppMaterialMgr;

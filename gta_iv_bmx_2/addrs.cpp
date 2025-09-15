@@ -74,6 +74,21 @@ size_t g_CVehicle__turnEngineOff;
 size_t g_hookAddr_CTransmission__processOverheat;
 size_t g_hookAddr_spawnBikeBlowUpFire;
 
+size_t g_CEntity__getCollider;
+size_t g_CPhysical__setInitialVelocity;
+size_t g_CPhysical__setInitialRotateVelocity;
+
+size_t g_vmtAddr_CTaskComplexPlayerDrive__controlSubTask;
+size_t g_CPed__getPad2;
+size_t g_CAnimAssociations__getAnimIdFromAnimAssociationGroupId;
+size_t g_CAnimManager__getAnimByIdAndHash;
+size_t g_CAnimBlender__blendAnimation;
+size_t g_CAnimPlayer__getAnimEventTime;
+size_t g_vmt_CPed__updateAnim;
+size_t g_hookAddr_CAnimPlayer__update;
+size_t g_hookAddr_readHandling;
+size_t g_hookAddr_readHandlingFirstLine;
+
 bool g_bIsCE = false;
 
 void initAddrsEFLC1120() {
@@ -440,6 +455,76 @@ DWORD initAddrsDynamicCE() {
 	}
 	else
 		result |= 1 << 8;
+
+	g_CEntity__getCollider = findPattern("8B 41 38 85 C0 74 38 0F B7 40 08 B9 ? ? ? ? 66 3B C1 74 2A 8B C8 A1 ? ? ? ? 8B 50 04 ");
+	if (!g_CEntity__getCollider)
+		result |= 1 << 8;
+
+	g_CPhysical__setInitialVelocity = findPattern("E8 ? ? ? ? 8D 44 24 10 50 8B CF C7 44 24 ? ? ? ? ? C7 44 24 ? ? ? ? ? C7 44 24 ? ? ? ? ? E8 ? ? ? ? 8B 47 28 ");
+	if (!g_CPhysical__setInitialVelocity)
+		result |= 1 << 8;
+	else {
+	g_CPhysical__setInitialRotateVelocity = getFnAddrInCallOpcode(g_CPhysical__setInitialVelocity + 0x24);
+	g_CPhysical__setInitialVelocity = getFnAddrInCallOpcode(g_CPhysical__setInitialVelocity);
+	}
+
+
+	addr = findPattern("C7 06 ? ? ? ? E8 ? ? ? ? 8B 44 24 0C 8D 7E 28 8D 4E 34 C7 46 ? ? ? ? ? C6 46 24 00 89 07 ", 2);
+	if (addr) {
+		size_t* vmt = *(size_t**)addr;
+
+		g_vmtAddr_CTaskComplexPlayerDrive__controlSubTask = (size_t)(vmt + 0x50 / sizeof size_t);
+
+	}
+	else
+		result |= 1 << 8;
+
+	g_CPed__getPad2 = findPattern("E8 ? ? ? ? 89 44 24 20 85 C0 0F 84 ? ? ? ? 8B CF E8 ? ? ? ? 8B F0 32 DB 89 74 24 24 83 FE 03 7D 47 8B 17 8D 44 24 30 50 8B CF FF 92 ? ? ? ? ");
+	if (!g_CPed__getPad2)
+		result |= 1 << 8;
+	else
+		g_CPed__getPad2 = getFnAddrInCallOpcode(g_CPed__getPad2);
+
+	g_CAnimAssociations__getAnimIdFromAnimAssociationGroupId = findPattern("E8 ? ? ? ? 57 50 E8 ? ? ? ? 83 C4 08 5F 5E C3 ");
+
+	if (g_CAnimAssociations__getAnimIdFromAnimAssociationGroupId) {
+		g_CAnimManager__getAnimByIdAndHash = getFnAddrInCallOpcode(g_CAnimAssociations__getAnimIdFromAnimAssociationGroupId + 7);
+		g_CAnimAssociations__getAnimIdFromAnimAssociationGroupId = getFnAddrInCallOpcode(g_CAnimAssociations__getAnimIdFromAnimAssociationGroupId);
+	}
+	else
+		result |= 1 << 8;
+
+	g_CAnimBlender__blendAnimation = findPattern("83 EC 14 8B 44 24 1C 8B 91 ? ? ? ? C1 E8 08 25 ? ? ? ? 56 57 89 44 24 10 33 C0 33 FF 89 4C 24 08 89 44 24 18 89 44 24 14 85 D2 0F 84 ? ? ? ? EB 0B ");
+	if (!g_CAnimBlender__blendAnimation)
+		result |= 1 << 9;
+
+	g_CAnimPlayer__getAnimEventTime = findPattern("83 EC 10 53 55 8B D9 56 66 83 7B ? ? 57 89 5C 24 14 0F 85 ? ? ? ? 8B 4B 40 85 C9 0F 84 ? ? ? ? 6A 00 68 ? ? ? ? E8 ? ? ? ? ");
+	if (!g_CAnimPlayer__getAnimEventTime)
+		result |= 1 << 9;
+
+	addr = findPattern("C7 07 ? ? ? ? 66 C7 87 ? ? ? ? ? ? C6 87 ? ? ? ? ? C7 87 ? ? ? ? ? ? ? ? 0F B6 01 ", 2);
+	if (addr) {
+		size_t* vmt = *(size_t**)addr;
+
+		g_vmt_CPed__updateAnim = (size_t)(vmt + 0x88 / sizeof size_t);
+
+	}
+	else
+		result |= 1 << 4;
+
+	g_hookAddr_CAnimPlayer__update = findPattern("E8 ? ? ? ? 8B 4C 24 1C 8B 46 74 09 81 ? ? ? ? EB 06 ");
+	if (g_hookAddr_CAnimPlayer__update) { }
+	else
+		result |= 1 << 4;
+
+
+	g_hookAddr_readHandlingFirstLine = findPattern("E8 ? ? ? ? 8B F8 83 C4 10 85 FF 0F 84 ? ? ? ? 56 ");
+	if (!g_hookAddr_readHandlingFirstLine)
+		result |= 1 << 4;
+	g_hookAddr_readHandling = findPattern("E8 ? ? ? ? 8B F8 83 C4 08 85 FF 0F 85 ? ? ? ? 5E 53 ");
+	if (!g_hookAddr_readHandling)
+		result |= 1 << 4;
+
 
 
 	return result;

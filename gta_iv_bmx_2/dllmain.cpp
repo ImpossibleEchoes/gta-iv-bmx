@@ -21,10 +21,12 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 	switch (ul_reason_for_call)
 	{
 	case DLL_PROCESS_ATTACH:
-		//enableConsole();
+		enableConsole();
 		//system("pause");
 		if (initAddrsDynamicCE())
-			MessageBoxA(nullptr, "Error?", nullptr, 0x10);
+			MessageBoxA(nullptr, 
+				"Error?\nIt seems you are running a non ce build. It is not supported\nBut you can implement it yourself\nThe source code is available for everyone on github", 
+				nullptr, 0x10);
 		bmx_patch::patch();
 		break;
 	case DLL_THREAD_ATTACH:

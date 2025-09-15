@@ -21,6 +21,18 @@ struct CVirtualClassesHelper {
 
 };
 
+// NOTE phCollider does not exist by itself. It is a base class (like CVehicle). dynamic_cast will not work, so it is up to the programmer to cast to the correct child class manually.
+struct phCollider : CVirtualClassesHelper {
+	PADDING(0x10C); // +4
+	Vector3 m_vecVelocity; // +110
+	Vector3 m_vecRotateVelocity; // +120
+	PADDING(0x170); // +130
+};
+
+STATIC_ASSERT_EXPR(offsetof(phCollider, m_vecVelocity) == 0x110);
+STATIC_ASSERT_EXPR(offsetof(phCollider, m_vecRotateVelocity) == 0x120);
+STATIC_ASSERT_EXPR(sizeof phCollider == 0x2A0);
+
 struct CEntity : CVirtualClassesHelper {
 
 
@@ -40,6 +52,8 @@ struct CEntity : CVirtualClassesHelper {
 		else
 			m_dwFlags2 &= ~0x400;
 	}
+
+	__forceinline phCollider *getCollider() { return ((phCollider*(__thiscall*)(CEntity*))(g_CEntity__getCollider)) (this); }
 
 };
 
@@ -109,6 +123,10 @@ struct CPhysical : CDynamicEntity {
 		else
 			m_dwPhysicalFlags &= ~0x10000;
 	}
+
+	__forceinline int setInitialVelocity(Vector3* pNewVelocity) { return ((int(__thiscall*)(CEntity*, Vector3 *))(g_CPhysical__setInitialVelocity)) (this, pNewVelocity); }
+	__forceinline int setInitialRotateVelocity(Vector3* pNewVelocity) { return ((int(__thiscall*)(CEntity*, Vector3 *))(g_CPhysical__setInitialRotateVelocity)) (this, pNewVelocity); }
+
 };
 
 STATIC_ASSERT_EXPR(offsetof(CPhysical, m_dwPhysicalFlags) == 0x118);
@@ -145,13 +163,16 @@ struct CVehicleModelInfo : CBaseModelInfo {
 	PADDING(0xC); // +60
 
 	DWORD m_dwTypes[2]; // +6C
-	PADDING(0x58); // +74
+	PADDING(0x50); // +74
+	int m_AnimGroupId; // +C4
+	PADDING(0x4); // +C8
 	DWORD* m_pBones; // +CC
 	PADDING(0x2F8); // +D0
 	
 };
 
 STATIC_ASSERT_EXPR(offsetof( CVehicleModelInfo, m_dwTypes) == 0x6C);
+STATIC_ASSERT_EXPR(offsetof( CVehicleModelInfo, m_AnimGroupId) == 0xC4);
 STATIC_ASSERT_EXPR(offsetof( CVehicleModelInfo, m_pBones) == 0xCC);
 STATIC_ASSERT_EXPR(sizeof CVehicleModelInfo == 0x3C8);
 
@@ -167,11 +188,77 @@ struct CIkManager : CVirtualClassesHelper {
 	bool setRightFootPos(Vector3* pBoneOffset, Matrix34* pTargetMatrix);
 };
 
-struct CPed : CPhysical {
-	PADDING(0xBB0 - 0x1C0); // +210
-	CIkManager m_ikManager; // +BB0
+struct CPad;
+struct CVehicle;
+
+struct CTaskInfo : CVirtualClassesHelper {
+	int m_nTaskType; // +4
+	union {
+		struct {
+			int m_bActive : 1;
+			int m_nPriority : 3;
+			int m_nUnknown : 4;
+		};
+		int m_nInfo; // +8
+	};
+	CTaskInfo* m_pNext; // +C
+	CTaskInfo* m_pPrev; // 10
 };
+STATIC_ASSERT_EXPR(offsetof(CTaskInfo, m_nTaskType) == 0x4);
+STATIC_ASSERT_EXPR(offsetof(CTaskInfo, m_nInfo) == 0x8);
+STATIC_ASSERT_EXPR(offsetof(CTaskInfo, m_pNext) == 0xC);
+STATIC_ASSERT_EXPR(offsetof(CTaskInfo, m_pPrev) == 0x10);
+STATIC_ASSERT_EXPR(sizeof(CTaskInfo) == 0x14);
+
+struct CTaskInfoManager {
+	CTaskInfo* m_pFirstTaskinfo; // +0
+	CTaskInfo* m_pLastTaskInfo; // +4
+	PADDING(0x8); // +8
+};
+STATIC_ASSERT_EXPR(sizeof(CTaskInfoManager) == 0x10);
+
+struct CPedIntelligence : CVirtualClassesHelper {
+	PADDING(0x2E0 - 4); // +4
+	CTaskInfoManager m_taskInfoManager;
+};
+STATIC_ASSERT_EXPR(offsetof(CPedIntelligence, m_taskInfoManager) == 0x2E0);
+
+struct CPedIntelligenceNY : CPedIntelligence {};
+
+struct CPed : CPhysical {
+	PADDING(0x14 + 0x50); // +1C0
+	CPedIntelligenceNY* m_pIntelligence; // +224
+	PADDING(0x970 - 0x18 - 0x50); // +228
+	CVehicle* m_pVehRef; // +B30
+	PADDING(0x7C); // +B34
+	CIkManager m_ikManager; // +BB0
+
+	__forceinline CPad* getPad() { return ((CPad * (__thiscall*)(CPed * pThis))(g_CPed__getPad2))(this); }
+
+	__forceinline bool isTaskActive(int id) {
+		auto pTaskInfo = m_pIntelligence->m_taskInfoManager.m_pFirstTaskinfo;
+		if (pTaskInfo) {
+			auto prevPriority = pTaskInfo->m_nPriority;
+
+			do {
+				DWORD priority = pTaskInfo->m_nPriority;
+				if (prevPriority < priority)
+					break;
+				prevPriority = priority;
+				if (pTaskInfo->m_nTaskType == id) {
+					return true;
+				}
+				pTaskInfo = pTaskInfo->m_pNext;
+
+			} while (pTaskInfo);
+		}
+		return false;
+	}
+
+};
+STATIC_ASSERT_EXPR(offsetof(CPed, m_pIntelligence) == 0x224);
 STATIC_ASSERT_EXPR(offsetof(CPed, m_ikManager) == 0xBB0);
+STATIC_ASSERT_EXPR(offsetof(CPed, m_pVehRef) == 0xB30);
 
 struct CWheel {
 
@@ -510,7 +597,9 @@ STATIC_ASSERT_EXPR(sizeof(CDynamicEntity) == 0x10C);
 STATIC_ASSERT_EXPR(sizeof(CPhysical) == 0x1C0);
 
 struct CVehicle : CPhysical {
-	PADDING(0xD54); // +1C0
+	PADDING(0xC08); // +1C0
+	CHandlingVehicle *m_pHandling; // +DC8
+	PADDING(0x148); // +1C0
 	BYTE m_nbVehicleFlags1_0; // +F14
 	BYTE m_nbVehicleFlags1_1; // +F15
 	BYTE m_nbVehicleFlags1_2; // +F16
@@ -542,6 +631,7 @@ struct CVehicle : CPhysical {
 
 };
 
+STATIC_ASSERT_EXPR(offsetof(CVehicle, m_pHandling) == 0xDC8);
 STATIC_ASSERT_EXPR(offsetof(CVehicle, m_nbVehicleFlags1_0) == 0xF14);
 STATIC_ASSERT_EXPR(offsetof(CVehicle, m_pDriver) == 0xF50);
 STATIC_ASSERT_EXPR(offsetof(CVehicle, m_dwNumWheels) == 0xF84);
@@ -556,6 +646,11 @@ struct CBike : CVehicle {
 };
 
 STATIC_ASSERT_EXPR(sizeof(CBike) == 0x17B4);
+
+struct crAnimation : CVirtualClassesHelper {
+	BYTE __4[8];
+	float m_fDuration;
+};
 
 struct CAnimPlayer : CVirtualClassesHelper {
 	DWORD m_dwFlags;
@@ -573,7 +668,7 @@ struct CAnimPlayer : CVirtualClassesHelper {
 	float _f34;
 	DWORD _f38;
 	float m_fBlendOutDelta;
-	void* m_pAnimation;
+	crAnimation* m_pAnimation;
 	WORD m_isValid;
 	WORD m_dwFlags2;
 	int _f48;
@@ -587,7 +682,7 @@ struct CAnimPlayer : CVirtualClassesHelper {
 	float _f68;
 	float _f6C;
 	float m_fAnimTimeEnd;
-	DWORD _f74;
+	float _f74;
 	float _f78;
 	float _f7C;
 	float _f80;
@@ -607,6 +702,14 @@ struct CAnimPlayer : CVirtualClassesHelper {
 			return -getBlendRate();
 		return 0.f;
 	}
+
+	__forceinline char getAnimEventTime(int mask, float* time, float start, float end) {
+		return ((char(__thiscall*)(CAnimPlayer * pThis, int mask, float* time, float start, float end))(g_CAnimPlayer__getAnimEventTime))(this, mask, time, start, end);
+	}
+
+	virtual float getBlendUpdateAmount() { return 0.f; }
+	virtual float getPhaseUpdateAmount() { return 0.f; }
+
 };
 
 struct CAtdVirtualBase : CVirtualClassesHelper { };
@@ -644,4 +747,73 @@ struct CAnimBlender : CVirtualClassesHelper {
 		return nullptr;
 	}
 
+	CAnimPlayer* findAnimInBlend(crAnimation* pAnim) {
+		auto pNode = m_pNodes;
+		while (pNode) {
+			if (
+				pNode->m_data.m_isValid == 1 &&
+				pNode->m_data.m_pAnimation == pAnim
+				) {
+				return &pNode->m_data;
+			}
+			pNode = pNode->m_pNext;
+
+		}
+		return nullptr;
+
+	}
+
+	__forceinline CAnimPlayer* blendAnimation(crAnimation* pAnim, int flags, int layerIndex, float _unk, int _unk2, int _unk3, const char* pszWadName, const char* pszAnimName, int wadId, int animHash) {
+		return ((CAnimPlayer * (__thiscall*)(CAnimBlender*, crAnimation*, int, int, float, int, int, const char*, const char*, int, int))(g_CAnimBlender__blendAnimation))
+			(this, pAnim, flags, layerIndex, _unk, _unk2, _unk3, pszWadName, pszAnimName, wadId, animHash);
+	}
+
+
+
 };
+
+// class rage::ioValue
+struct ioValue {
+	struct __declspec(align(4)) History {
+		BYTE m_nbValue;
+		void* _f4; // unk ptr
+	};
+
+	BYTE _f4;
+	BYTE _f5;
+	BYTE m_nbValue;
+	BYTE m_nbLastValue;
+	BYTE m_nbHistoryIndex;
+	BYTE _f9;
+	BYTE _fa;
+	BYTE _fb;
+	History* m_pHistory; // => num = 0x40
+
+	__forceinline bool isPressed() {
+		return (_f4 ^ m_nbValue) > 0x3F;
+	}
+
+	__forceinline bool isJustPressed() {
+		return m_nbLastValue <= 0x3F && isPressed();
+	}
+
+	__forceinline bool isJustReleased() {
+		return m_nbLastValue > 0x3F && !isPressed();
+	}
+
+	__forceinline virtual ~ioValue() {} // только один виртуальный метод
+};
+
+struct CPad {
+	BYTE __0[0x2698];
+	ioValue m_aValues[187];
+};
+
+
+__forceinline crAnimation* getAnimByIdAndHash(int id, DWORD hash) {
+
+	auto pWadAnimId = ((int(__stdcall*)(int))(g_CAnimAssociations__getAnimIdFromAnimAssociationGroupId))(id);
+	auto pAnim = ((crAnimation * (__cdecl*)(int, DWORD))(g_CAnimManager__getAnimByIdAndHash))(pWadAnimId, hash);
+
+	return pAnim;
+}
