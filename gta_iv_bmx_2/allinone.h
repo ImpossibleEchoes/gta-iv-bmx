@@ -642,9 +642,13 @@ STATIC_ASSERT_EXPR(offsetof(CVehicle, m_fPetrolTankHealth) == 0x10D8);
 STATIC_ASSERT_EXPR(sizeof(CVehicle) == 0x1308);
 
 struct CBike : CVehicle {
-	PADDING(0x17B4 - 0x1308);
+	//PADDING(0x17B4 - 0x1308);
+	PADDING(0xFC); // +1308
+	float m_fLean; // +1404
+	PADDING(0x3AC); // +1408
 };
 
+STATIC_ASSERT_EXPR(offsetof(CBike, m_fLean) == 0x1404);
 STATIC_ASSERT_EXPR(sizeof(CBike) == 0x17B4);
 
 struct crAnimation : CVirtualClassesHelper {

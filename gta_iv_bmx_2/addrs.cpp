@@ -88,6 +88,8 @@ size_t g_vmt_CPed__updateAnim;
 size_t g_hookAddr_CAnimPlayer__update;
 size_t g_hookAddr_readHandling;
 size_t g_hookAddr_readHandlingFirstLine;
+size_t g_hookAddr_updateBmxDriverBmx;
+size_t g_hookAddr_processBikeLean;
 
 bool g_bIsCE = false;
 
@@ -523,6 +525,14 @@ DWORD initAddrsDynamicCE() {
 		result |= 1 << 4;
 	g_hookAddr_readHandling = findPattern("E8 ? ? ? ? 8B F8 83 C4 08 85 FF 0F 85 ? ? ? ? 5E 53 ");
 	if (!g_hookAddr_readHandling)
+		result |= 1 << 4;
+
+	g_hookAddr_updateBmxDriverBmx = findPattern("E8 ? ? ? ? 8B 4E 44 83 C4 18 89 44 24 18 3B C1 74 3B 85 C9 74 1D 56 ");
+	if (!g_hookAddr_updateBmxDriverBmx)
+		result |= 1 << 4;
+
+	g_hookAddr_processBikeLean = findPattern("E8 ? ? ? ? 80 A7 16 0F 00 00 ? 80 A7 17 0F 00 00 ? ");
+	if (!g_hookAddr_processBikeLean)
 		result |= 1 << 4;
 
 

@@ -73,6 +73,8 @@ extern size_t g_vmt_CPed__updateAnim;
 extern size_t g_hookAddr_CAnimPlayer__update;
 extern size_t g_hookAddr_readHandling;
 extern size_t g_hookAddr_readHandlingFirstLine;
+extern size_t g_hookAddr_updateBmxDriverBmx;
+extern size_t g_hookAddr_processBikeLean;
 
 //extern size_t g_getDistSqrToCamera;
 //extern size_t g_ppMaterialMgr;
